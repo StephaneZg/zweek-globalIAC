@@ -1,0 +1,12 @@
+# @author : Stephane Zang Bengono
+# @email : stephane.zangbengono@gmail.com
+
+- name: Include Jenkins server playbook
+  ansible.builtin.import_playbook: playbooks/jenkins-srv-playbook.yml
+
+- name: Include Monitoring server playbook
+  ansible.builtin.import_playbook: playbooks/monitoring-srv-playbook.yml
+
+- name: Include k8s installation playbook
+  ansible.builtin.import_playbook: playbooks/k8s-cluster-playbook.yml
+

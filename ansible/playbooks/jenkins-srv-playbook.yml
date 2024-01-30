@@ -1,0 +1,188 @@
+---
+
+- hosts: pipelining
+  become: yes
+  vars:
+    arch_mapping:  # Map ansible architecture {{ ansible_architecture }} names to Docker's architecture names
+      x86_64: amd64
+      aarch64: arm64
+
+  tasks:
+    - name: Update server packages
+      ansible.builtin.apt:
+        update_cache: true
+    
+    - name: Install opnJDK (java default version)
+      ansible.builtin.apt:
+        name:
+          - openjdk-17-jre
+        state: present
+    
+    - name: Adding jenkins key file 
+      ansible.builtin.shell:
+        cmd: | 
+          sudo wget -O /usr/share/keyrings/jenkins-keyring.asc \
+          https://pkg.jenkins.io/debian/jenkins.io-2023.key
+
+    - name: Add Jenkins repository
+      ansible.builtin.shell:
+        cmd: | 
+          echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] \
+          https://pkg.jenkins.io/debian binary/ | sudo tee \
+          /etc/apt/sources.list.d/jenkins.list > /dev/null
+
+    - name: Update server packages
+      ansible.builtin.apt:
+        update_cache: true
+    
+    - name: Install jenkins
+      ansible.builtin.apt:
+        name:
+          - jenkins
+        state: present
+    
+    - name: Retreive Admin User default password 
+      ansible.builtin.shell: cat /var/lib/jenkins/secrets/initialAdminPassword
+      register: admin_password
+
+    - name: jenkins Admin password
+      ansible.builtin.debug:
+        msg: Hello Fulks this is the Admin user password |--> {{admin_password}}
+     
+    - name: Update server packages
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        pkg:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - software-properties-common
+          - wget
+          - lsb-release
+
+    - name: Create directory for Docker's GPG key
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Add Docker's official GPG key
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        keyring: /etc/apt/keyrings/docker.gpg
+        state: present
+
+    - name: Print architecture variables
+      ansible.builtin.debug:
+        msg: "Architecture: {{ ansible_architecture }}, Codename: {{ ansible_lsb.codename }}"
+
+    - name: Add Docker repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch={{ arch_mapping[ansible_architecture] | default(ansible_architecture) }}
+          signed-by=/etc/apt/keyrings/docker.gpg]
+          https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable
+        filename: docker
+        state: present
+
+    - name: Install Docker and related packages
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: present
+        update_cache: true
+      loop:
+        - docker-ce
+        - docker-ce-cli
+        - containerd.io
+        - docker-buildx-plugin
+        - docker-compose-plugin
+
+    - name: Add Docker group
+      ansible.builtin.group:
+        name: docker
+        state: present
+
+    - name: Add user to Docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+
+    - name: Enable and start Docker services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - docker.service
+        - containerd.service
+
+    - name: Install python package manager pip 
+      ansible.builtin.apt:
+        name:
+          - python3-pip
+        state: present
+    
+    - name: Install Docker Api module
+      ansible.builtin.shell: 
+        cmd: pip install docker && pip install requests
+
+    - name: Create db container and connect to network
+      community.docker.docker_container:
+        name: sonar
+        image: "sonarqube:lts-community"
+        restart_policy: "unless-stopped"
+        ports:
+          - 9000:9000
+
+    - name: Install trivy key file
+      ansible.builtin.shell: 
+        cmd: wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+
+    - name: Add Trivy repository
+      ansible.builtin.shell:
+        cmd: echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
+      
+    - name: Update server packages
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: install trivy
+      ansible.builtin.apt:
+        name:
+          - trivy
+        state: present
+
+    - name: Install nginx
+      ansible.builtin.apt:
+        name:
+          - nginx
+        state: present
+
+    - name: Remove default config
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Load nginx configuration
+      ansible.builtin.copy:
+        content: "{{ lookup('file', '../files/jenkins-srv-nginx.conf') }}"
+        dest: /etc/nginx/sites-enabled/jenkins-srv-nginx.conf
+
+    - name: Enable and start nginx service
+      ansible.builtin.systemd:
+        name: nginx
+        enabled: true
+        state: started
+
+
+
+  handlers:
+    - name: update_server_packages
+      ansible.builtin.apt:
+        update_cache: true
+        

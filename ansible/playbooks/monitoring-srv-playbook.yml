@@ -1,0 +1,283 @@
+---
+
+- hosts: monitoring
+  become: yes
+  vars:
+    arch_mapping:  # Map ansible architecture {{ ansible_architecture }} names to Docker's architecture names
+      x86_64: amd64
+      aarch64: arm64
+
+  tasks:
+    - name: Update server packages
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: add prometheus user
+      ansible.builtin.user:
+        name: prometheus
+        system: true
+        shell: /bin/false
+    
+    - name: Install required packages
+      ansible.builtin.apt:
+        pkg:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - software-properties-common
+          - wget
+          - lsb-release
+
+    - name: Download prometheus
+      ansible.builtin.shell:
+        cmd: wget https://github.com/prometheus/prometheus/releases/download/v2.49.0/prometheus-2.49.0.linux-amd64.tar.gz
+
+    - name: Untar prometheus package
+      ansible.builtin.shell:
+        cmd: tar -xvf prometheus-2.49.0.linux-amd64.tar.gz
+
+    - name: create prometheus directory
+      file:
+        path: /etc/prometheus
+        state: directory     
+
+    - name: move prometheus to /usr/local/bin
+      ansible.builtin.copy: 
+        remote_src: true
+        src:  "{{ item }}"
+        dest: /usr/local/bin/
+        mode: 0755
+      loop:
+        - /home/ubuntu/prometheus-2.49.0.linux-amd64/prometheus
+        - /home/ubuntu/prometheus-2.49.0.linux-amd64/promtool
+
+    - name: move console to /etc/prometheus
+      ansible.builtin.copy: 
+        remote_src: true
+        src: "{{ item }}"
+        dest: /etc/prometheus
+        owner: prometheus
+        mode: 0755
+      loop:
+        - /home/ubuntu/prometheus-2.49.0.linux-amd64/consoles
+        - /home/ubuntu/prometheus-2.49.0.linux-amd64/console_libraries 
+
+    - name: create emtpy prometheus configuration file
+      ansible.builtin.copy:
+        content: ""
+        dest: /etc/prometheus/prometheus.yml
+
+    - name: Adding prometheus global configuration file
+      blockinfile:
+        path: /etc/prometheus/prometheus.yml
+        block: |
+          # my global config
+          global:
+            scrape_interval: 15s # Set the scrape interval to every 15 seconds. Default is every 1 minute.
+            evaluation_interval: 15s # Evaluate rules every 15 seconds. The default is every 1 minute.
+            # scrape_timeout is set to the global default (10s).
+
+          # Alertmanager configuration
+          alerting:
+            alertmanagers:
+              - static_configs:
+                  - targets:
+                    # - alertmanager:9093
+
+          # Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
+          rule_files:
+            # - "first_rules.yml"
+            # - "second_rules.yml"
+
+          # A scrape configuration containing exactly one endpoint to scrape:
+          # Here it's Prometheus itself.
+          scrape_configs:
+            # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+            - job_name: "prometheus"
+              static_configs:
+                - targets: ["localhost:9090"]
+
+            - job_name: "node_exporter"
+              static_configs:
+                - targets: ["localhost:9100"]
+            - job_name: "jenkins"
+              metrics_path: /prometheus
+              static_configs:
+                - targets: ["{{ hostvars['jenkins_srv'].ansible_private_ipv4 }}:8080"]
+            - job_name: "node_exporter_k8smaster"
+              static_configs:
+                - targets: ["{{ hostvars['master'].ansible_private_ipv4 }}:9100"]
+            - job_name: "node_exporter_k8sworker1"
+              static_configs:
+                - targets: ["{{ hostvars['worker-1'].ansible_private_ipv4 }}:9100"]
+    
+    - name: create Data directory
+      ansible.builtin.file:
+        path: /data
+        state: directory
+        force: no
+
+    - name: Change /etc/prometheus file owner
+      ansible.builtin.shell:
+        cmd: sudo chown -R prometheus:prometheus /etc/prometheus/ /data/
+
+    - name: create emtpy prometheus service file
+      ansible.builtin.copy:
+        content: ""
+        dest: /etc/systemd/system/prometheus.service
+        owner: prometheus
+        
+
+    - name: Add prometheus services
+      ansible.builtin.blockinfile:
+        path: /etc/systemd/system/prometheus.service
+        block: |
+          [Unit]
+          Description=Prometheus
+          Wants=network-online.target
+          After=network-online.target
+          StartLimitIntervalSec=500
+          StartLimitBurst=5
+          [Service]
+          User=prometheus
+          Group=prometheus
+          Type=simple
+          Restart=on-failure
+          RestartSec=5s
+          ExecStart=/usr/local/bin/prometheus \
+          --config.file=/etc/prometheus/prometheus.yml \
+          --storage.tsdb.path=/data \
+          --web.console.templates=/etc/prometheus/consoles \
+          --web.console.libraries=/etc/prometheus/console_libraries \
+          --web.listen-address=0.0.0.0:9090 \
+          --web.enable-lifecycle
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and start Prometheus services
+      ansible.builtin.systemd:
+        daemon-reload: true
+        name: prometheus
+        enabled: true
+        state: started
+
+    - name: add node exporter user
+      ansible.builtin.user:
+        name: node_exporter
+        system: true
+        shell: /bin/false
+
+    - name: Download node exporter
+      ansible.builtin.shell:
+        cmd: wget https://github.com/prometheus/node_exporter/releases/download/v1.7.0/node_exporter-1.7.0.linux-amd64.tar.gz
+
+    - name: Untar node exporter package
+      ansible.builtin.shell:
+        cmd: tar -xvf node_exporter-1.7.0.linux-amd64.tar.gz
+    
+    - name: Move node exporter to /usr/local/bin
+      ansible.builtin.copy: 
+        remote_src: true
+        src:  /home/ubuntu/node_exporter-1.7.0.linux-amd64/node_exporter
+        dest: /usr/local/bin/
+        mode: 0755
+
+    - name: create emtpy node exporter service file
+      ansible.builtin.copy:
+        content: ""
+        dest: /etc/systemd/system/node_exporter.service
+        owner: node_exporter
+
+    - name: Add node exporter services
+      ansible.builtin.blockinfile:
+        path: /etc/systemd/system/node_exporter.service
+        block: |
+          [Unit]
+          Description=Node Exporter
+          Wants=network-online.target
+          After=network-online.target
+          StartLimitIntervalSec=500
+          StartLimitBurst=5
+          [Service]
+          User=node_exporter
+          Group=node_exporter
+          Type=simple
+          Restart=on-failure
+          RestartSec=5s
+          ExecStart=/usr/local/bin/node_exporter \
+          --collector.logind
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and start Node Exporter services
+      ansible.builtin.systemd:
+        daemon-reload: true
+        name: node_exporter
+        enabled: true
+        state: started
+    
+    - name: Reload prometheus server
+      ansible.builtin.shell:
+        cmd: curl -X POST http://localhost:9090/-/reload
+
+    - name: create key directory
+      file:
+        path: /etc/apt/keyrings/
+        state: directory  
+    
+    - name: Add grafana key
+      ansible.builtin.shell:
+        cmd: wget -q -O - https://apt.grafana.com/gpg.key | gpg --dearmor | sudo tee /etc/apt/keyrings/grafana.gpg > /dev/null
+
+    - name: Add grafana repository
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" 
+        filename: grafana
+    
+    - name: Update server packages
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Update server packages
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Install grafana
+      ansible.builtin.apt:
+        name:
+          - grafana
+        state: present
+
+    - name: Enable and start grafana services
+      ansible.builtin.systemd:
+        name: grafana-server
+        enabled: true
+        state: started
+
+    - name: Install nginx
+      ansible.builtin.apt:
+        name:
+          - nginx
+        state: present
+
+    - name: Remove default config
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Load nginx configuration
+      ansible.builtin.copy:
+        content: "{{ lookup('file', '../files/monitoring-srv-nginx.conf') }}"
+        dest: /etc/nginx/sites-enabled/monitoring-srv-nginx.conf
+
+    - name: Enable and start nginx service
+      ansible.builtin.systemd:
+        name: nginx
+        enabled: true
+        state: started
+
+  handlers:
+    - name: update_server_packages
+      ansible.builtin.apt:
+        update_cache: true
