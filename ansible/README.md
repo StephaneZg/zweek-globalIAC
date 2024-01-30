@@ -1,21 +1,20 @@
-# Ansible Playbook for instance configuration and ressources installation
+# Ansible Playbook for Instance Configuration and Resource Installation
 
-## Resume
-> For the Ansible installation architecture i proceed with simple sub-playbooks for each instance to remove complexity of using roles 
+## Summary
+In our Ansible installation architecture, we've simplified complexity by employing dedicated sub-playbooks for each instance. This approach enhances manageability and clarity during configuration.
 
-The ansible project is organize as follow
-- the `/playbooks`folder contains the dedicated playbooks for installations on each instance (jenkins_server, monitoring_server, etc...)
-- the `/host_vars` folder contains the variable used on each instance for specific use case
-- the `/files` folder contains comon file or configuration that could be used during any of the playbook
+### Project Organization
+- `/playbooks`: Contains dedicated playbooks for installations on each instance (e.g., jenkins_server, monitoring_server, etc.).
+- `/host_vars`: Stores variables used on each instance for specific use cases.
+- `/files`: Houses common files or configurations that could be utilized during any playbook execution.
 
-then a the root level you have the `main-playbook.yml` which include ready to used playbook fo te installation and configuration
+At the root level, you'll find `main-playbook.yml`, which integrates ready-to-use playbooks for installation and configuration.
 
-# Notes
-Before running the main playbook file of any of the playbook, please be sure to update all the variables used fo the installation
-- `inventory.ini` host ip address variabales
-- each variables file in `host_vars` folder
-- take time to go trought all to identify how each variable is used
-
+## Notes
+Before executing the main playbook or any sub-playbook, ensure all variables used for the installation are updated:
+- Update IP address variables in `inventory.ini`.
+- Review and update variables in each file within the `host_vars` folder.
+- Take the time to understand how each variable is utilized across the playbooks.
 
 ## References
-- [Ansible documentation](https://docs.ansible.com/)
+- [Ansible Documentation](https://docs.ansible.com/)
